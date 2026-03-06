@@ -1,0 +1,113 @@
+plugins {
+    id 'application'
+    id 'org.beryx.runtime' version '1.13.1'
+}
+
+group = 'local'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    // Produce Java 21-compatible bytecode even though we compile with JDK 25.
+    options.release = 21
+}
+
+application {
+    mainClass = 'app.Main'
+
+    // JVM flags required by JCEF on JDK 16+
+    def jvmArgs = ['--add-opens', 'java.desktop/sun.awt=ALL-UNNAMED']
+    def os = System.getProperty('os.name').toLowerCase()
+    if (os.contains('mac') || os.contains('darwin')) {
+        jvmArgs += ['--add-opens', 'java.desktop/sun.lwawt=ALL-UNNAMED',
+                    '--add-opens', 'java.desktop/sun.lwawt.macosx=ALL-UNNAMED']
+    }
+    applicationDefaultJvmArgs = jvmArgs
+}
+
+// ---------------------------------------------------------------------------
+// JCEF Dependencies
+// ---------------------------------------------------------------------------
+// jcefmaven  : wrapper that initialises JCEF and extracts platform natives.
+// jcef-natives-* : pre-built Chromium (CEF) binaries for the host platform.
+//   Including the native jar means the end-user never downloads anything;
+//   jcefmaven extracts CEF from the classpath jar on first launch.
+// ---------------------------------------------------------------------------
+
+ext {
+    jcefVersion       = '141.0.10'
+    jcefNativeVersion = 'jcef-2caef5a+cef-141.0.10+g1d65b0d+chromium-141.0.7390.123'
+}
+
+dependencies {
+    implementation "me.friwi:jcefmaven:${jcefVersion}"
+
+    // Include only the native bundle for the platform we are building on.
+    // (jpackage can only produce images for the host OS anyway.)
+    def osName   = System.getProperty('os.name').toLowerCase()
+    def archName = System.getProperty('os.arch').toLowerCase()
+
+    if (osName.contains('linux')) {
+        def suffix = (archName.contains('aarch64') || archName.contains('arm64')) ? 'linux-arm64' : 'linux-amd64'
+        implementation "me.friwi:jcef-natives-${suffix}:${jcefNativeVersion}"
+    } else if (osName.contains('mac') || osName.contains('darwin')) {
+        def suffix = (archName.contains('aarch64') || archName.contains('arm64')) ? 'macosx-arm64' : 'macosx-amd64'
+        implementation "me.friwi:jcef-natives-${suffix}:${jcefNativeVersion}"
+    } else if (osName.contains('win')) {
+        def suffix = (archName.contains('aarch64') || archName.contains('arm64')) ? 'windows-arm64' : 'windows-amd64'
+        implementation "me.friwi:jcef-natives-${suffix}:${jcefNativeVersion}"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Runtime image + jpackage
+// ---------------------------------------------------------------------------
+
+runtime {
+    options = ['--compress', '2', '--no-header-files', '--no-man-pages']
+
+    // JDK modules required at runtime (Swing, HTTPS, etc.)
+    modules = [
+        'java.desktop',
+        'java.logging',
+        'java.naming',
+        'java.net.http',
+        'jdk.unsupported',
+        'jdk.crypto.ec'
+    ]
+
+    jpackage {
+        imageName     = 'AnonyChat'
+        installerName = 'AnonyChat'
+        appVersion    = version
+        skipInstaller = true
+
+        def os = System.getProperty('os.name').toLowerCase()
+
+        imageOptions = []
+
+        // Icon
+        def icon = os.contains('mac') ? file('assets/icon.icns')
+                 : os.contains('win') ? file('assets/icon.ico')
+                 : file('assets/icon.png')
+        if (icon.exists()) {
+            imageOptions += ['--icon', icon.absolutePath]
+        }
+
+        // JVM flags for JCEF
+        imageOptions += ['--java-options', '--add-opens java.desktop/sun.awt=ALL-UNNAMED']
+        if (os.contains('mac') || os.contains('darwin')) {
+            imageOptions += ['--java-options', '--add-opens java.desktop/sun.lwawt=ALL-UNNAMED']
+            imageOptions += ['--java-options', '--add-opens java.desktop/sun.lwawt.macosx=ALL-UNNAMED']
+        }
+    }
+}
